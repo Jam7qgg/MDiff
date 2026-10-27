@@ -1,0 +1,328 @@
+# coding=utf-8
+# Copyright 2020 The Google Research Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""All functions related to loss computation and optimization.
+"""
+
+import torch
+import torch.optim as optim
+import numpy as np
+from models import model_utils as mutils
+from sde_lib import VESDE, VPSDE, HFS_SDE
+from utils.utils import *
+import torch.autograd.functional as F
+
+
+def get_optimizer(config, params):
+    """Returns a flax optimizer object based on `config`."""
+    if config.optim.optimizer == "Adam":
+        optimizer = optim.Adam(
+            params,
+            lr=config.optim.lr,
+            betas=(config.optim.beta1, 0.999),
+            eps=config.optim.eps,
+            weight_decay=config.optim.weight_decay,
+        )
+    else:
+        raise NotImplementedError(
+            f"Optimizer {config.optim.optimizer} not supported yet!"
+        )
+
+    return optimizer
+
+
+def optimization_manager(config):
+    """Returns an optimize_fn based on `config`."""
+
+    def optimize_fn(
+        optimizer,
+        params,
+        step,
+        lr=config.optim.lr,
+        warmup=config.optim.warmup,
+        grad_clip=config.optim.grad_clip,
+    ):
+        """Optimizes with warmup and gradient clipping (disabled if negative)."""
+        if warmup > 0:
+            for g in optimizer.param_groups:
+                g["lr"] = lr * np.minimum(step / warmup, 1.0)
+        if grad_clip >= 0:
+            torch.nn.utils.clip_grad_norm_(params, max_norm=grad_clip)
+        optimizer.step()
+
+    return optimize_fn
+
+
+def get_sde_loss_fn(
+        config,
+        sde,
+        train,
+        reduce_mean=True,
+        continuous=True,
+        likelihood_weighting=True,
+        eps=1e-5,
+        gamma=2.5,  # 新增Min-SNR-γ超参数
+):
+    reduce_op = torch.mean if reduce_mean else lambda *args, **kwargs: 0.5 * torch.sum(*args, **kwargs)
+    mask = get_mask(config, "sde")
+
+    def compute_snr(t, beta_min=0.1, beta_max=20.0):
+        """
+        计算信噪比 SNR(t)
+        t: 时间点（标量或张量，范围 [0, 1]）
+        """
+        beta_diff = beta_max - beta_min
+        gamma_t = (beta_min * t + 1/3 * beta_diff * t ** 3)
+        alpha_bar_t = torch.exp(-gamma_t)
+        snr = alpha_bar_t / (1 - alpha_bar_t+eps)
+        snr = torch.log(snr+1) #对数变换
+        return snr
+
+    def loss_fn(model, batch):
+        """Compute the loss function.
+
+        Args:
+          model: A score model.
+          batch: A mini-batch of training data.
+
+        Returns:
+          loss: A scalar that represents the average loss value across the mini-batch.
+        """
+        # print(f"\n===== 输入batch形状: {batch.shape} =====")
+
+        score_fn = mutils.get_score_fn(sde, model, train=train, continuous=continuous)
+        #
+        t = torch.rand(batch.shape[0], device=batch.device) * (sde.T - eps) + eps
+        # print(f"时间步t: {t.detach().cpu().numpy().round(4)}")
+        # z is Gaussian noise and represents the log gradient in the model
+        z = torch.randn_like(batch)
+        # print(f"噪声z统计: mean={z.mean().item():.3f}, std={z.std().item():.3f}")
+        with torch.no_grad():
+            # 调用之前定义的 compute_snr 函数（需确保 beta_min 和 beta_max 与配置一致）
+            snr = compute_snr(t, beta_min=0.1, beta_max=20.0)
+            # print(f"SNR值: {snr.detach().cpu().numpy().round(4)}")
+            # 正确实现Min-SNR-γ公式
+            snr_weights = torch.minimum( gamma/(snr + eps), torch.tensor(1.0))
+            snr_weights=torch.clamp(snr_weights, min=0.3,max=1.0)
+            # print(f"当前snr_min：{snr_weights}")
+
+        if isinstance(sde, HFS_SDE):
+            mean, std_coeff = sde.marginal_prob(batch, t)
+            
+            z_pdfs = z[:, :2, :, :]
+            z_pd = z[:, 2:, :, :]
+
+            M_hat_z_pdfs = (
+                c2r(ifft2c_2d((1.0 - mask) * fft2c_2d(r2c(z_pdfs))))
+                .type(torch.FloatTensor)
+                .to(config.device)
+            )
+
+            M_hat_z_pd = (
+                c2r(ifft2c_2d((1.0 - mask) * fft2c_2d(r2c(z_pd))))
+                .type(torch.FloatTensor)
+                .to(config.device)
+            )
+
+            M_hat_z = torch.cat([M_hat_z_pdfs, M_hat_z_pd], dim=1)
+
+            perturbed_data = mean + std_coeff[:, None, None, None] * M_hat_z
+        else:
+            mean, std = sde.marginal_prob(batch, t)
+            perturbed_data = mean + std[:, None, None, None] * z
+
+        score = score_fn(perturbed_data, t)  # 1x2x320x320
+
+        if not likelihood_weighting:
+            if isinstance(sde, HFS_SDE):
+                score_pdfs = score[:, :2, :, :]
+                score_pd = score[:, 2:, :, :]
+
+                M_hat_score_pdfs = std_coeff[:, None, None, None] * c2r(
+                    ifft2c_2d((1.0 - mask) * fft2c_2d(r2c(score_pdfs)))
+                ).type(torch.FloatTensor).to(config.device)
+
+                losses_pdfs = torch.square(M_hat_score_pdfs + M_hat_z_pdfs)
+                
+                # 计算辅助模态PD的损失
+                losses_pd = torch.square(score_pd * std_coeff[:, None, None, None] + z_pd)
+                
+                # 应用权重: 90% Target (PDFS), 10% Aux (PD)
+                losses_pdfs = losses_pdfs * 0.9
+                losses_pd = losses_pd * 0.1
+                
+                losses = torch.cat([losses_pdfs, losses_pd], dim=1)
+                
+                # raw_loss_per_sample = losses.mean(dim=(1, 2, 3))
+                # print(f"HFS-SDE加权前损失: {raw_loss_per_sample.detach().cpu().numpy().round(4)}")
+            else:
+                losses = torch.square(score * std[:, None, None, None] + z)
+            losses=losses*snr_weights[:,None,None,None]
+            losses = reduce_op(losses.reshape(losses.shape[0], -1), dim=-1)
+            # print(f"最终样本损失: {losses.detach().cpu().numpy().round(4)}")
+
+        else:
+            g2 = sde.sde(torch.zeros_like(batch), t)[1] ** 2
+            losses = torch.square(score + z / std[:, None, None, None])
+            losses = reduce_op(losses.reshape(losses.shape[0], -1), dim=-1) * g2
+
+        loss = torch.mean(losses)
+        # print(f"当前批次平均损失: {losses.mean().item():.4f}")
+        return loss
+
+    return loss_fn
+
+
+
+
+def get_smld_loss_fn(vesde, train, reduce_mean=False):
+    """Legacy code to reproduce previous results on SMLD(NCSN). Not recommended for new work."""
+    assert isinstance(vesde, VESDE), "SMLD training only works for VESDEs."
+
+    # Previous SMLD models assume descending sigmas
+    smld_sigma_array = torch.flip(vesde.discrete_sigmas, dims=(0,))
+    reduce_op = (
+        torch.mean
+        if reduce_mean
+        else lambda *args, **kwargs: 0.5 * torch.sum(*args, **kwargs)
+    )
+
+    def loss_fn(model, batch):
+        model_fn = mutils.get_model_fn(model, train=train)
+        labels = torch.randint(0, vesde.N, (batch.shape[0],), device=batch.device)
+        sigmas = smld_sigma_array.to(batch.device)[labels]
+        noise = torch.randn_like(batch) * sigmas[:, None, None, None]
+        perturbed_data = noise + batch
+        score = model_fn(perturbed_data, labels)
+        target = -noise / (sigmas**2)[:, None, None, None]
+        losses = torch.square(score - target)
+        losses = reduce_op(losses.reshape(losses.shape[0], -1), dim=-1) * sigmas**2
+        loss = torch.mean(losses)
+        return loss
+
+    return loss_fn
+
+
+def get_ddpm_loss_fn(vpsde, train, reduce_mean=True):
+    """Legacy code to reproduce previous results on DDPM. Not recommended for new work."""
+    assert isinstance(vpsde, VPSDE), "DDPM training only works for VPSDEs."
+
+    reduce_op = (
+        torch.mean
+        if reduce_mean
+        else lambda *args, **kwargs: 0.5 * torch.sum(*args, **kwargs)
+    )
+
+    def loss_fn(model, batch):
+        model_fn = mutils.get_model_fn(model, train=train)
+        labels = torch.randint(0, vpsde.N, (batch.shape[0],), device=batch.device)
+        sqrt_alphas_cumprod = vpsde.sqrt_alphas_cumprod.to(batch.device)
+        sqrt_1m_alphas_cumprod = vpsde.sqrt_1m_alphas_cumprod.to(batch.device)
+        noise = torch.randn_like(batch)
+        perturbed_data = (
+            sqrt_alphas_cumprod[labels, None, None, None] * batch
+            + sqrt_1m_alphas_cumprod[labels, None, None, None] * noise
+        )
+        score = model_fn(perturbed_data, labels)
+        losses = torch.square(score - noise)
+        losses = reduce_op(losses.reshape(losses.shape[0], -1), dim=-1)
+        loss = torch.mean(losses)
+        return loss
+
+    return loss_fn
+
+
+
+def get_step_fn(
+    config,
+    sde,
+    train,
+    optimize_fn=None,
+    reduce_mean=False,
+    continuous=True,
+    likelihood_weighting=False,
+):
+    """Create a one-step training/evaluation function.
+
+    Args:
+      sde: An `sde_lib.SDE` object that represents the forward SDE.
+      optimize_fn: An optimization function.
+      reduce_mean: If `True`, average the loss across data dimensions. Otherwise sum the loss across data dimensions.
+      continuous: `True` indicates that the model is defined to take continuous time steps.
+      likelihood_weighting: If `True`, weight the mixture of score matching losses according to
+        https://arxiv.org/abs/2101.09258; otherwise use the weighting recommended by our paper.
+
+    Returns:
+      A one-step function for training or evaluation.
+    """
+    if continuous:
+        loss_fn = get_sde_loss_fn(
+            config,
+            sde,
+            train,
+            reduce_mean=reduce_mean,
+            continuous=True,
+            likelihood_weighting=likelihood_weighting,
+        )
+    else:
+        assert (
+            not likelihood_weighting
+        ), "Likelihood weighting is not supported for original SMLD/DDPM training."
+        if isinstance(sde, VESDE):
+            loss_fn = get_smld_loss_fn(sde, train, reduce_mean=reduce_mean)
+        elif isinstance(sde, VPSDE):
+            loss_fn = get_ddpm_loss_fn(sde, train, reduce_mean=reduce_mean)
+        else:
+            raise ValueError(
+                f"Discrete training for {sde.__class__.__name__} is not recommended."
+            )
+    def step_fn(state, batch):
+        """Running one step of training or evaluation.
+
+        This function will undergo `jax.lax.scan` so that multiple steps can be pmapped and jit-compiled together
+        for faster execution.
+
+        Args:
+          state: A dictionary of training information, containing the score model, optimizer,
+           EMA status, and number of optimization steps.
+          batch: A mini-batch of training/evaluation data.
+
+        Returns:
+          loss: The average loss value of this state.
+        """
+        model = state["model"]
+        if train:
+            optimizer = state["optimizer"]
+            optimizer.zero_grad()
+            accumulation_steps = config.optim.gradient_accumulation_steps
+            micro_batches = torch.chunk(batch, accumulation_steps, dim=0) #拆分批次
+            for micro_batch in micro_batches:
+                loss = loss_fn(model, micro_batch)
+                # 梯度累积：损失除以累积步数以平均梯度
+                (loss / accumulation_steps).backward()
+            optimize_fn(optimizer, model.parameters(), step=state["step"])
+            state["step"] += 1
+            state["ema"].update(model.parameters())
+        else:
+            with torch.no_grad():
+                ema = state["ema"]
+                ema.store(model.parameters())
+                ema.copy_to(model.parameters())
+                loss = loss_fn(model, batch)
+                ema.restore(model.parameters())
+
+        return loss
+
+    return step_fn
