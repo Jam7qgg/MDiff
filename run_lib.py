@@ -359,8 +359,8 @@ def train(config, workdir):
         sde = sde_lib.subVPSDE(config)
     elif config.training.sde.lower() == "vesde":
         sde = sde_lib.VESDE(config)
-    elif config.training.sde.lower() == "hfssde":
-        sde = sde_lib.HFS_SDE(config)
+    elif config.training.sde.lower() == "mdiff":
+        sde = sde_lib.MDiffSDE(config)
     else:
         raise NotImplementedError(f"SDE {config.training.sde} unknown.")
 
@@ -628,8 +628,8 @@ def sample(config, workdir):
     elif config.training.sde.lower() == "vesde":
         sde = sde_lib.VESDE(config)
         sampling_eps = 1e-5
-    elif config.training.sde.lower() == "hfssde":
-        sde = sde_lib.HFS_SDE(config)
+    elif config.training.sde.lower() == "mdiff":
+        sde = sde_lib.MDiffSDE(config)
         sampling_eps = 1e-3  # TODO
     else:
         raise NotImplementedError(f"SDE {config.training.sde} unknown.")

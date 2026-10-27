@@ -14,7 +14,7 @@
 # limitations under the License.
 
 # Lint as: python3
-"""Training DDPM with VP SDE."""
+"""MDiff training and sampling configuration."""
 
 import os
 
@@ -26,7 +26,7 @@ def get_config():
 
     # training
     training = config.training
-    training.sde = "hfssde"
+    training.sde = "mdiff"
     training.continuous = True
     training.reduce_mean = True
     training.mask_type = "low_frequency"  # low_frequency, u
@@ -55,7 +55,7 @@ def get_config():
     sampling.fft = "nofft"  # fft or nofft
 
     sampling.accelerated_sampling =False
-    if training.sde == "hfssde":
+    if training.sde == "mdiff":
         sampling.snr = 0.16
         if sampling.accelerated_sampling:
             sampling.snr = 0.32

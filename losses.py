@@ -20,7 +20,7 @@ import torch
 import torch.optim as optim
 import numpy as np
 from models import model_utils as mutils
-from sde_lib import VESDE, VPSDE, HFS_SDE
+from sde_lib import VESDE, VPSDE, MDiffSDE
 from utils.utils import *
 import torch.autograd.functional as F
 
@@ -118,7 +118,7 @@ def get_sde_loss_fn(
             snr_weights=torch.clamp(snr_weights, min=0.3,max=1.0)
             # print(f"Current SNR weights: {snr_weights}")
 
-        if isinstance(sde, HFS_SDE):
+        if isinstance(sde, MDiffSDE):
             mean, std_coeff = sde.marginal_prob(batch, t)
             
             z_pdfs = z[:, :2, :, :]
@@ -146,7 +146,7 @@ def get_sde_loss_fn(
         score = score_fn(perturbed_data, t)  # 1x2x320x320
 
         if not likelihood_weighting:
-            if isinstance(sde, HFS_SDE):
+            if isinstance(sde, MDiffSDE):
                 score_pdfs = score[:, :2, :, :]
                 score_pd = score[:, 2:, :, :]
 
@@ -166,7 +166,7 @@ def get_sde_loss_fn(
                 losses = torch.cat([losses_pdfs, losses_pd], dim=1)
                 
                 # raw_loss_per_sample = losses.mean(dim=(1, 2, 3))
-                # print(f"HFS-SDE loss before weighting: {raw_loss_per_sample.detach().cpu().numpy().round(4)}")
+                # print(f"MDiff loss before weighting: {raw_loss_per_sample.detach().cpu().numpy().round(4)}")
             else:
                 losses = torch.square(score * std[:, None, None, None] + z)
             losses=losses*snr_weights[:,None,None,None]

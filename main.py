@@ -33,7 +33,7 @@ def main(argv):
                 FLAGS.workdir = os.path.dirname(os.path.dirname(resume_checkpoint))
         else:
             TIMESTAMP = "{0:%Y_%m_%dT%H_%M_%S}".format(datetime.now())
-            if FLAGS.config.training.sde == "hfssde":
+            if FLAGS.config.training.sde == "mdiff":
                 MODEL_ID = "_".join(
                     [
                         TIMESTAMP,

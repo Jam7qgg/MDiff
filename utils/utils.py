@@ -66,7 +66,7 @@ def save_mat(save_dict, variable, file_name, index=0, normalize=True):
     scio.savemat(file, datadict)
 
 
-def hfssde_save_mat(config, variable, variable_name="recon", normalize=True):
+def mdiff_save_mat(config, variable, variable_name="recon", normalize=True):
     if normalize:
         variable = normalize_complex(variable)
     variable = variable.cpu().detach().numpy()

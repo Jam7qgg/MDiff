@@ -197,7 +197,7 @@ class AdaptivePredictor(Predictor):
                 _, img_pd = atb
                 if img_pd is not None:
                     # Optimized: Calculate std directly to avoid expensive FFT in marginal_prob
-                    # Formula from HFS_SDE.marginal_prob
+                    # Formula from MDiffSDE.marginal_prob
                     beta_0 = self.rsde.config.model.beta_min
                     beta_1 = self.rsde.config.model.beta_max
                     log_mean_coeff = (
@@ -281,7 +281,7 @@ def get_pc_sampler(config, sde, shape, predictor, train_mask, atb_mask,
             t = (torch.ones(shape[0]).to(device) * sde.T).type(torch.FloatTensor).to(device)
 
             # Initial sample
-            if isinstance(sde, sde_lib.HFS_SDE):
+            if isinstance(sde, sde_lib.MDiffSDE):
                 z = sde.prior_sampling(shape).to(config.device)
 
                 if isinstance(atb, (list, tuple)):

@@ -317,7 +317,7 @@ class subVPSDE(SDE):
         return -N / 2.0 * np.log(2 * np.pi) - torch.sum(z**2, dim=(1, 2, 3)) / 2.0
 
 
-class HFS_SDE(SDE):
+class MDiffSDE(SDE):
     def __init__(self, config):
         """Construct a MultiScale SDE.
 
@@ -336,7 +336,7 @@ class HFS_SDE(SDE):
         )
 
         self.mask = get_mask(config, "sde")
-        print(f"DEBUG: HFS_SDE init. mask device: {self.mask.device}, config.device: {config.device}")
+        print(f"DEBUG: MDiffSDE init. mask device: {self.mask.device}, config.device: {config.device}")
 
         # TODO
         self.alphas = 1.0 - self.discrete_betas

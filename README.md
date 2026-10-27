@@ -8,7 +8,7 @@ Code for **MDiff: A Lightweight Multi Modal Diffusion Framework for Accelerated 
 
 **Code repository:** [github.com/Jam7qgg/MDiff](https://github.com/Jam7qgg/MDiff)
 
-MDiff is a lightweight multimodal MRI reconstruction framework based on diffusion modeling and feature reuse. This repository contains the core PyTorch model, training, sampling, and evaluation implementation. The default HFS-SDE configuration reconstructs PDFS images using PD as the auxiliary modality. Complex-valued images are represented by real and imaginary channels, giving four input channels at a spatial resolution of 320 x 320.
+MDiff is a lightweight multimodal MRI reconstruction framework based on diffusion modeling and feature reuse. This repository contains the core PyTorch model, training, sampling, and evaluation implementation. The default MDiff configuration reconstructs PDFS images using PD as the auxiliary modality. Complex-valued images are represented by real and imaginary channels, giving four input channels at a spatial resolution of 320 x 320.
 
 ## Repository Structure
 
@@ -27,7 +27,7 @@ models/
   ema.py                        Exponential moving average
 configs/
   default_fastMRI_configs.py    Optimizer, random seed, and shared settings
-  hfssde/ddpm_continuous.py      Multimodal fastMRI training and sampling settings
+  mdiff/ddpm_continuous.py       Multimodal fastMRI training and sampling settings
 utils/
   datasets.py                   Paired-data loading
   utils.py                      Complex operations, FFT, masks, and checkpoints
@@ -45,8 +45,8 @@ The target runtime is Linux with Python 3.10 and an NVIDIA GPU. Model computatio
 git clone https://github.com/Jam7qgg/MDiff.git
 cd MDiff
 
-conda create -n HFS python=3.10 -y
-conda activate HFS
+conda create -n mdiff python=3.10 -y
+conda activate mdiff
 python -m pip install --upgrade pip
 # CUDA 12.1 example: select an official wheel compatible with your GPU driver.
 python -m pip install torch==2.5.1 torchvision==0.20.1 --index-url https://download.pytorch.org/whl/cu121
@@ -108,7 +108,7 @@ Run single-GPU training from the repository root:
 
 ```bash
 CUDA_VISIBLE_DEVICES=0 python main.py \
-  --config=configs/hfssde/ddpm_continuous.py \
+  --config=configs/mdiff/ddpm_continuous.py \
   --mode=train --workdir=results
 ```
 
@@ -116,7 +116,7 @@ For two GPUs:
 
 ```bash
 CUDA_VISIBLE_DEVICES=0,1 torchrun --standalone --nproc_per_node=2 main.py \
-  --config=configs/hfssde/ddpm_continuous.py \
+  --config=configs/mdiff/ddpm_continuous.py \
   --mode=train --workdir=results
 ```
 
@@ -126,7 +126,7 @@ Checkpoints are stored in `results/<timestamp_and_configuration>/checkpoints/`. 
 
 ```bash
 CUDA_VISIBLE_DEVICES=0 python main.py \
-  --config=configs/hfssde/ddpm_continuous.py \
+  --config=configs/mdiff/ddpm_continuous.py \
   --mode=train --workdir=results \
   --config.training.resume_checkpoint=/absolute/path/to/checkpoint_70.pth \
   --config.training.resume_epoch=70
@@ -138,7 +138,7 @@ Evaluate a trained checkpoint:
 
 ```bash
 CUDA_VISIBLE_DEVICES=0 python main.py \
-  --config=configs/hfssde/ddpm_continuous.py \
+  --config=configs/mdiff/ddpm_continuous.py \
   --mode=sample --workdir=results \
   --config.sampling.checkpoint_path=/absolute/path/to/checkpoint_190.pth \
   --config.sampling.ckpt=190 \

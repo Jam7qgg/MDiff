@@ -193,7 +193,7 @@ def get_noise_fn(sde, model, train=False, continuous=False):
       labels = t * 999
       noise = model_fn(x, labels)
       return noise
-  elif isinstance(sde, sde_lib.HFS_SDE) and continuous:
+  elif isinstance(sde, sde_lib.MDiffSDE) and continuous:
       def noise_fn(x, t):
           labels = sde.marginal_prob(torch.zeros_like(x), t)[1]
           noise = model_fn(x, labels)
