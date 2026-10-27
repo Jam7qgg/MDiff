@@ -473,7 +473,7 @@ class Upsample(nn.Module):
         super().__init__()
         self.with_conv = with_conv
         if with_conv:
-            # 使用自定义卷积函数或默认的ddpm_conv3x3
+            # Use the custom convolution or the default ddpm_conv3x3.
             conv_fn = custom_conv if custom_conv is not None else ddpm_conv3x3
             self.Conv_0 = conv_fn(channels, channels)
 
@@ -490,7 +490,7 @@ class Downsample(nn.Module):
         super().__init__()
         self.with_conv = with_conv
         if with_conv:
-            # 使用自定义卷积函数或默认的ddpm_conv3x3
+            # Use the custom convolution or the default ddpm_conv3x3.
             conv_fn = custom_conv if custom_conv is not None else ddpm_conv3x3
             self.Conv_0 = conv_fn(channels, channels, stride=2, padding=0)
 
@@ -719,7 +719,7 @@ class ResnetBlockDDPM(nn.Module):
             num_groups=32, num_channels=in_ch, eps=1e-6)
         self.act = act
 
-        # 使用自定义卷积函数或默认的ddpm_conv3x3
+        # Use the custom convolution or the default ddpm_conv3x3.
         conv_fn = custom_conv if custom_conv is not None else ddpm_conv3x3
         self.Conv_0 = conv_fn(in_ch, out_ch)
 
@@ -732,7 +732,7 @@ class ResnetBlockDDPM(nn.Module):
             num_groups=32, num_channels=out_ch, eps=1e-6)
         self.Dropout_0 = nn.Dropout(dropout)
 
-        # 第二个卷积层也使用自定义卷积或默认卷积
+        # Use the selected convolution for the second residual layer.
         self.Conv_1 = conv_fn(out_ch, out_ch, init_scale=0.)
 
         if in_ch != out_ch:
@@ -768,9 +768,9 @@ class CBAMLayer(nn.Module):
     def __init__(self, channels, reduction=16, spatial_kernel=7):
         super(CBAMLayer, self).__init__()
         # channel attention
-        # 替换为确定性实现 - 使用全局平均池化和手动实现的全局最大池化
-        self.avg_pool = nn.AvgPool2d(1)  # 这个是安全的
-        # self.max_pool = nn.AdaptiveMaxPool2d(1)  # 这个导致了deterministic错误
+        # Channel attention pooling.
+        self.avg_pool = nn.AvgPool2d(1)  # Preserve the existing average-pooling operation.
+        # self.max_pool = nn.AdaptiveMaxPool2d(1)  # Disabled in the original deterministic implementation.
 
         self.mlp = nn.Sequential(
             nn.Conv2d(channels, channels // reduction, 1, bias=False),
@@ -786,16 +786,16 @@ class CBAMLayer(nn.Module):
         # Channel attention
         avg_out = self.mlp(self.avg_pool(x))
 
-        # 手动实现全局最大池化（确定性的方式）
+        # Compute a global maximum over each channel.
         b, c, _, _ = x.size()
-        # 使用F.max_pool2d，指定kernel_size等于特征图大小
+        # Set the pooling kernel to the full spatial extent.
         max_out = self.mlp(F.max_pool2d(x, kernel_size=x.size()[2:]))
 
         channel_out = self.sigmoid(max_out + avg_out)
         x = channel_out * x
 
         # Spatial attention
-        # 使用确定性的方式实现空间注意力
+        # Compute spatial attention.
         max_out, _ = torch.max(x, dim=1, keepdim=True)
         avg_out = torch.mean(x, dim=1, keepdim=True)
         spatial_out = self.sigmoid(self.conv(torch.cat([max_out, avg_out], dim=1)))
@@ -803,7 +803,7 @@ class CBAMLayer(nn.Module):
         return x
 
 
-# 创建与AttnBlock接口兼容的CBAM模块
+# CBAM module with an AttnBlock-compatible interface
 class CBAMBlock(nn.Module):
     def __init__(self, channels, reduction=16):
         super().__init__()
@@ -813,11 +813,11 @@ class CBAMBlock(nn.Module):
     def forward(self, x):
         h = self.GroupNorm_0(x)
         h = self.cbam(h)
-        return x + h  # 添加残差连接与原模块保持一致
+        return x + h  # Use a residual connection to match the original attention block.
 
-# 添加Winograd卷积实现
+# Winograd convolution wrapper
 class WinogradConv2d(nn.Module):
-    """使用Winograd算法的3×3卷积实现，用于加速大尺寸输入的卷积计算"""
+    """3x3 convolution wrapper with Winograd transform buffers."""
     def __init__(self, in_channels, out_channels, kernel_size=3, stride=1, padding=1, bias=True, init_scale=1.):
         super().__init__()
         self.in_channels = in_channels
@@ -826,19 +826,19 @@ class WinogradConv2d(nn.Module):
         self.stride = stride
         self.padding = padding
         
-        # 创建标准卷积参数
+        # Create standard convolution parameters.
         self.weight = nn.Parameter(torch.zeros(out_channels, in_channels, kernel_size, kernel_size))
         if bias:
             self.bias = nn.Parameter(torch.zeros(out_channels))
         else:
             self.register_parameter('bias', None)
             
-        # 初始化参数 (使用与DDPM相同的初始化方法)
+        # Initialize parameters using the DDPM initialization.
         self.weight.data = default_init(init_scale)(self.weight.data.shape)
         if bias:
             nn.init.zeros_(self.bias)
             
-        # Winograd F(2,3)变换矩阵
+        # Winograd F(2,3) transform matrices
         self.register_buffer('B_T', torch.tensor([
             [1, 0, -1, 0],
             [0, 1, 1, 0],
@@ -861,27 +861,27 @@ class WinogradConv2d(nn.Module):
         ], dtype=torch.float32))
         
     def forward(self, x):
-        # 打印确认信息
+        # Diagnostic output
 
-        # 这里我们总是使用Winograd（F(2,3)）实现
+        # Select the convolution path according to the input size.
         
-        # 如果输入尺寸不大，回退到标准卷积
+        # Use standard convolution for small inputs.
         if x.shape[2] < 64 or x.shape[3] < 64:
             return F.conv2d(x, self.weight, self.bias, self.stride, self.padding)
             
-        # Winograd实现 (F(2,3))
-        # 预计算滤波器变换 (只需计算一次)
+        # Winograd F(2,3) transform setup
+        # Compute the transformed filters.
         batch_size, channels, height, width = x.shape
         
-        # 对于真实实现，我们应该实现一个完整的Winograd卷积
-        # 但为了简单起见，这里我们使用PyTorch的标准卷积
-        # 在实际部署时替换为完整的Winograd实现
+        # A complete Winograd convolution would use the transformed filters.
+        # This implementation currently calls standard PyTorch convolution.
+        # The transform buffers are retained for future implementation.
         result = F.conv2d(x, self.weight, self.bias, self.stride, self.padding)
         
         return result
 
 def winograd_conv3x3(in_planes, out_planes, stride=1, bias=True, init_scale=1.):
-    """使用Winograd算法优化的3×3卷积"""
+    """Construct the 3x3 convolution wrapper."""
     return WinogradConv2d(in_channels=in_planes, out_channels=out_planes, 
                          kernel_size=3, stride=stride, padding=1,
                          bias=bias, init_scale=init_scale)

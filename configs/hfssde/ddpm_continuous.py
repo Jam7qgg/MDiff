@@ -39,7 +39,7 @@ def get_config():
     # sampling
     sampling = config.sampling
     sampling.batch_size = 1
-    sampling.method = "pc"     #切换采样方法  probably flow = True 时 预测器直接求解ode
+    sampling.method = "pc"     #Sampling method
     sampling.predictor = "heun"  # reverse_diffusion or euler_maruyama or adaptive or none
     sampling.corrector = "none"  #   none
     sampling.folder = "fastMRI"
@@ -74,10 +74,10 @@ def get_config():
     sampling.robustness_perturbation = False  # Enable explicitly for robustness tests.
     sampling.robustness_type = "shift"  # "shift" or "elastic"
     sampling.robustness_shift_direction = "vertical"  # "horizontal" or "vertical"
-    sampling.robustness_shift_pixels = 20 # 偏移像素量
-    sampling.elastic_max_displacement = 3.0  # 最大局部位移（像素）
-    sampling.elastic_sigma = 12.0  # 位移场高斯平滑尺度（像素）
-    sampling.elastic_seed = 2026  # 每张切片使用 seed + slice index
+    sampling.robustness_shift_pixels = 20 # Shift magnitude in pixels
+    sampling.elastic_max_displacement = 3.0  # Maximum local displacement in pixels
+    sampling.elastic_sigma = 12.0  # Gaussian smoothing scale for the displacement field, in pixels
+    sampling.elastic_seed = 2026  # Use seed + slice index for each slice.
 
     # data
 
@@ -102,6 +102,6 @@ def get_config():
     model.attn_resolutions = (40,)
     model.resamp_with_conv = True
     model.conditional = True
-    model.reuse_N = 0 # 缓存复用间隔：每N+1步完整推理一次，其余N步复用缓存
+    model.reuse_N = 0 # Reuse interval: one full pass every N+1 iterations, followed by N reuse iterations.
                                                                                                                                                                                                                                                                                                                                                                  
     return config

@@ -234,8 +234,8 @@ class VPSDE(SDE):
 
     def sde(self, x, t):
         # Eq.32
-        # 多项式调度：beta_t = beta_0 + (beta_1 - beta_0) * t^p
-        p = 2.0  # 多项式幂次，可根据需要调整
+        # Polynomial schedule: beta_t = beta_0 + (beta_1 - beta_0) * t^p
+        p = 2.0  # Polynomial exponent
         beta_t = self.beta_0 + (self.beta_1 - self.beta_0) * (t ** p)
         drift = -0.5 * beta_t[:, None, None, None] * x
         diffusion = torch.sqrt(beta_t)
@@ -290,8 +290,8 @@ class subVPSDE(SDE):
         return 1
 
     def sde(self, x, t):
-        # 多项式调度：beta_t = beta_0 + (beta_1 - beta_0) * t^p
-        p = 2.0  # 多项式幂次，可根据需要调整
+        # Polynomial schedule: beta_t = beta_0 + (beta_1 - beta_0) * t^p
+        p = 2.0  # Polynomial exponent
         beta_t = self.beta_0 + (self.beta_1 - self.beta_0) * (t ** p)
         drift = -0.5 * beta_t[:, None, None, None] * x
         discount = 1.0 - torch.exp(

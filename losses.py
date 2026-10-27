@@ -73,21 +73,21 @@ def get_sde_loss_fn(
         continuous=True,
         likelihood_weighting=True,
         eps=1e-5,
-        gamma=2.5,  # 新增Min-SNR-γ超参数
+        gamma=2.5,  # Min-SNR gamma hyperparameter
 ):
     reduce_op = torch.mean if reduce_mean else lambda *args, **kwargs: 0.5 * torch.sum(*args, **kwargs)
     mask = get_mask(config, "sde")
 
     def compute_snr(t, beta_min=0.1, beta_max=20.0):
         """
-        计算信噪比 SNR(t)
-        t: 时间点（标量或张量，范围 [0, 1]）
+        Compute SNR(t).
+        t: Time point (scalar or tensor in [0, 1]).
         """
         beta_diff = beta_max - beta_min
         gamma_t = (beta_min * t + 1/3 * beta_diff * t ** 3)
         alpha_bar_t = torch.exp(-gamma_t)
         snr = alpha_bar_t / (1 - alpha_bar_t+eps)
-        snr = torch.log(snr+1) #对数变换
+        snr = torch.log(snr+1) #Log transform
         return snr
 
     def loss_fn(model, batch):
@@ -100,23 +100,23 @@ def get_sde_loss_fn(
         Returns:
           loss: A scalar that represents the average loss value across the mini-batch.
         """
-        # print(f"\n===== 输入batch形状: {batch.shape} =====")
+        # print(f"\n===== Input batch shape: {batch.shape} =====")
 
         score_fn = mutils.get_score_fn(sde, model, train=train, continuous=continuous)
         #
         t = torch.rand(batch.shape[0], device=batch.device) * (sde.T - eps) + eps
-        # print(f"时间步t: {t.detach().cpu().numpy().round(4)}")
+        # print(f"Time t: {t.detach().cpu().numpy().round(4)}")
         # z is Gaussian noise and represents the log gradient in the model
         z = torch.randn_like(batch)
-        # print(f"噪声z统计: mean={z.mean().item():.3f}, std={z.std().item():.3f}")
+        # print(f"Noise z statistics: mean={z.mean().item():.3f}, std={z.std().item():.3f}")
         with torch.no_grad():
-            # 调用之前定义的 compute_snr 函数（需确保 beta_min 和 beta_max 与配置一致）
+            # Compute SNR using the specified beta schedule.
             snr = compute_snr(t, beta_min=0.1, beta_max=20.0)
-            # print(f"SNR值: {snr.detach().cpu().numpy().round(4)}")
-            # 正确实现Min-SNR-γ公式
+            # print(f"SNR values: {snr.detach().cpu().numpy().round(4)}")
+            # Compute the clipped SNR weights.
             snr_weights = torch.minimum( gamma/(snr + eps), torch.tensor(1.0))
             snr_weights=torch.clamp(snr_weights, min=0.3,max=1.0)
-            # print(f"当前snr_min：{snr_weights}")
+            # print(f"Current SNR weights: {snr_weights}")
 
         if isinstance(sde, HFS_SDE):
             mean, std_coeff = sde.marginal_prob(batch, t)
@@ -156,22 +156,22 @@ def get_sde_loss_fn(
 
                 losses_pdfs = torch.square(M_hat_score_pdfs + M_hat_z_pdfs)
                 
-                # 计算辅助模态PD的损失
+                # Compute the auxiliary PD loss.
                 losses_pd = torch.square(score_pd * std_coeff[:, None, None, None] + z_pd)
                 
-                # 应用权重: 90% Target (PDFS), 10% Aux (PD)
+                # Apply relative weights: 0.9 for PDFS and 0.1 for PD.
                 losses_pdfs = losses_pdfs * 0.9
                 losses_pd = losses_pd * 0.1
                 
                 losses = torch.cat([losses_pdfs, losses_pd], dim=1)
                 
                 # raw_loss_per_sample = losses.mean(dim=(1, 2, 3))
-                # print(f"HFS-SDE加权前损失: {raw_loss_per_sample.detach().cpu().numpy().round(4)}")
+                # print(f"HFS-SDE loss before weighting: {raw_loss_per_sample.detach().cpu().numpy().round(4)}")
             else:
                 losses = torch.square(score * std[:, None, None, None] + z)
             losses=losses*snr_weights[:,None,None,None]
             losses = reduce_op(losses.reshape(losses.shape[0], -1), dim=-1)
-            # print(f"最终样本损失: {losses.detach().cpu().numpy().round(4)}")
+            # print(f"Final per-sample loss: {losses.detach().cpu().numpy().round(4)}")
 
         else:
             g2 = sde.sde(torch.zeros_like(batch), t)[1] ** 2
@@ -179,7 +179,7 @@ def get_sde_loss_fn(
             losses = reduce_op(losses.reshape(losses.shape[0], -1), dim=-1) * g2
 
         loss = torch.mean(losses)
-        # print(f"当前批次平均损失: {losses.mean().item():.4f}")
+        # print(f"Current batch mean loss: {losses.mean().item():.4f}")
         return loss
 
     return loss_fn
@@ -307,10 +307,10 @@ def get_step_fn(
             optimizer = state["optimizer"]
             optimizer.zero_grad()
             accumulation_steps = config.optim.gradient_accumulation_steps
-            micro_batches = torch.chunk(batch, accumulation_steps, dim=0) #拆分批次
+            micro_batches = torch.chunk(batch, accumulation_steps, dim=0) #Split the batch into micro-batches.
             for micro_batch in micro_batches:
                 loss = loss_fn(model, micro_batch)
-                # 梯度累积：损失除以累积步数以平均梯度
+                # Normalize each micro-batch loss for gradient accumulation.
                 (loss / accumulation_steps).backward()
             optimize_fn(optimizer, model.parameters(), step=state["step"])
             state["step"] += 1

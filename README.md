@@ -1,53 +1,64 @@
-# Multimodal MRI Reconstruction
+# MDiff
 
-基于 PyTorch 的多模态 MRI 重建核心实现，使用 HFS-SDE 扩散模型，以 PD 为辅助模态重建 PDFS。默认输入是目标与辅助模态的复数图像，分别以实部、虚部表示，共 4 个通道，空间尺寸为 320 × 320。
+Code for **MDiff: A Lightweight Multi Modal Diffusion Framework for Accelerated MRI Reconstruction via Feature Reuse**.
 
-本仓库提供核心模型、训练、采样和评估流程。数据集、灵敏度图、采样掩码、训练权重及实验结果需要自行准备；消融实验与专用批处理脚本不包含在此核心发布版中。
+**Journal:** Biomedical Signal Processing and Control
 
-## 代码结构
+**Publication status:** Accepted for publication
+
+**Code repository:** [github.com/Jam7qgg/MDiff](https://github.com/Jam7qgg/MDiff)
+
+MDiff is a lightweight multimodal MRI reconstruction framework based on diffusion modeling and feature reuse. This repository contains the core PyTorch model, training, sampling, and evaluation implementation. The default HFS-SDE configuration reconstructs PDFS images using PD as the auxiliary modality. Complex-valued images are represented by real and imaginary channels, giving four input channels at a spatial resolution of 320 x 320.
+
+## Repository Structure
 
 ```text
-main.py                         训练与采样入口
-run_lib.py                      数据预处理、训练循环、采样及指标汇总
-losses.py                       扩散训练损失与梯度累积
-sampling.py                     自适应 Heun 采样
-sde_lib.py                      SDE 定义与反向过程
-save_data_slice.py              检查配对数据并生成切片索引
+main.py                         Training and sampling entry point
+run_lib.py                      Preprocessing, training, reconstruction, and metrics
+losses.py                       Diffusion training losses and gradient accumulation
+sampling.py                     Adaptive Heun sampling and feature reuse scheduling
+sde_lib.py                      Forward and reverse SDE definitions
+save_data_slice.py              Paired-data validation and slice-index generation
 models/
-  ddpm.py                       U-Net、CSP 瓶颈与特征缓存
-  layers.py                     卷积、残差块、CBAM 与早期门控融合
-  model_utils.py                模型注册与 score 包装
-  normalization.py              归一化模块
-  ema.py                        指数滑动平均
+  ddpm.py                       U-Net, CSP bottleneck, and cached features
+  layers.py                     Convolutions, residual blocks, CBAM, and gated fusion
+  model_utils.py                Model registration and score-function wrappers
+  normalization.py              Normalization layers
+  ema.py                        Exponential moving average
 configs/
-  default_fastMRI_configs.py    优化器、随机种子与公共配置
-  hfssde/ddpm_continuous.py     fastMRI 多模态训练与采样配置
+  default_fastMRI_configs.py    Optimizer, random seed, and shared settings
+  hfssde/ddpm_continuous.py      Multimodal fastMRI training and sampling settings
 utils/
-  datasets.py                   配对数据加载
-  utils.py                      复数运算、FFT、掩码与 checkpoint 工具
-  calc.py                       PSNR、SSIM、NMSE、HFEN
+  datasets.py                   Paired-data loading
+  utils.py                      Complex operations, FFT, masks, and checkpoints
+  calc.py                       PSNR, SSIM, NMSE, and HFEN
 requirements.txt
 ```
 
-## 环境
+The internal model identifier remains `ddpm` to preserve compatibility with the existing configuration and checkpoint format.
 
-目标运行环境为 Linux、Python 3.10 和 NVIDIA GPU。核心模型计算使用 PyTorch；TensorFlow CPU 包用于现有文件接口。以下组合是整理后的依赖基线，未在本次源码发布时重新完成全量 GPU 训练验证。
+## Installation
+
+The target runtime is Linux with Python 3.10 and an NVIDIA GPU. Model computation uses PyTorch; the TensorFlow CPU package supports the existing file interfaces. The dependency versions below form the source-release baseline. A full GPU training run was not repeated as part of repository packaging.
 
 ```bash
+git clone https://github.com/Jam7qgg/MDiff.git
+cd MDiff
+
 conda create -n HFS python=3.10 -y
 conda activate HFS
 python -m pip install --upgrade pip
-# CUDA 12.1 示例；按服务器驱动选择官方提供的 CUDA wheel。
+# CUDA 12.1 example: select an official wheel compatible with your GPU driver.
 python -m pip install torch==2.5.1 torchvision==0.20.1 --index-url https://download.pytorch.org/whl/cu121
 python -m pip install -r requirements.txt
 python -m pip check
 ```
 
-PyTorch 与 torchvision 的配对及其他 CUDA 安装命令见 [PyTorch 官方版本说明](https://pytorch.org/get-started/previous-versions/#v251)。已安装对应 CUDA wheel 后，requirements 中的版本约束会复用它。
+See the [official PyTorch version instructions](https://pytorch.org/get-started/previous-versions/#v251) for matching torchvision versions and alternative CUDA wheels. Installing the matching CUDA wheels first allows the requirements file to reuse them.
 
-## 数据与掩码
+## Data Preparation
 
-在仓库根目录准备以下结构。外部数据目录也可以通过 Linux 符号链接放到 `data/`。
+Prepare the following layout under the repository root. External data directories can also be linked to `data/` using Linux symbolic links.
 
 ```text
 data/
@@ -68,19 +79,19 @@ mask/
   uniform_acc4_acs24.mat
 ```
 
-- `kspace` HDF5 数据集形状为 `[切片数, 线圈数, H, W]`，保存复数 k-space。
-- `s_maps` HDF5 数据集保存 PDFS 的复数灵敏度图，文件名与对应 PDFS 文件一致。当前实现也用这些图合成配对 PD，输入需满足对应的空间与线圈约定。
-- 配对 CSV 格式为 `PD,PDFS,score`，前两列是不带 `.h5` 的文件名。必须确保配对切片空间对应。
-- 当前 fastMRI 加载器在图像域中心裁剪至 320 × 320，并在训练与测试中跳过每个扫描的前 8 张切片。
-- MAT 掩码必须包含二维数组 `mask`，形状为 `[320,320]`。训练默认使用 ACS=16 的低频掩码，测试默认使用 4 倍等距欠采样、ACS=24 的掩码。二者用途不同。
+- Each k-space HDF5 file contains a complex-valued dataset named `kspace`, with shape `[slices, coils, H, W]`.
+- Sensitivity-map files contain a complex-valued dataset named `s_maps` and have the same filenames as the corresponding PDFS files. The current implementation also uses these maps to combine the paired PD data, so the inputs must satisfy the corresponding spatial and coil conventions.
+- Pairing CSV files use the format `PD,PDFS,score`. The first two columns contain filenames without the `.h5` extension. Paired slices must be spatially aligned.
+- The fastMRI loader center-crops in the image domain to 320 x 320 and skips the first eight slices of each scan for both training and testing.
+- Each MAT mask file must contain a two-dimensional array named `mask` with shape `[320, 320]`. Training uses a low-frequency mask with ACS=16 by default. Testing uses uniform 4x undersampling with ACS=24.
 
-生成并检查训练索引：
+Validate the training data and generate its slice index:
 
 ```bash
 python save_data_slice.py
 ```
 
-生成测试索引：
+Generate the test index:
 
 ```bash
 python save_data_slice.py \
@@ -91,9 +102,9 @@ python save_data_slice.py \
   --output data/test/data_slice.pkl
 ```
 
-## 训练
+## Training
 
-在仓库根目录运行单 GPU 训练：
+Run single-GPU training from the repository root:
 
 ```bash
 CUDA_VISIBLE_DEVICES=0 python main.py \
@@ -101,7 +112,7 @@ CUDA_VISIBLE_DEVICES=0 python main.py \
   --mode=train --workdir=results
 ```
 
-双 GPU 训练：
+For two GPUs:
 
 ```bash
 CUDA_VISIBLE_DEVICES=0,1 torchrun --standalone --nproc_per_node=2 main.py \
@@ -109,9 +120,9 @@ CUDA_VISIBLE_DEVICES=0,1 torchrun --standalone --nproc_per_node=2 main.py \
   --mode=train --workdir=results
 ```
 
-默认配置为 190 epoch、每进程 batch size 8、梯度累积拆分数 2、随机种子 1000。日志中的 `Step` 是 batch 迭代编号；训练会随机采样扩散时间，并非每次训练都执行完整反向重建。损失为带频率投影的 score matching 损失，具体定义见 `losses.py`。
+Default settings are 190 epochs, a per-process batch size of 8, two micro-batches for gradient accumulation, and random seed 1000. The logged `Step` is a training batch iteration. Training samples diffusion times randomly and does not perform a complete reverse reconstruction for every batch. See `losses.py` for the frequency-projected score-matching objective.
 
-权重保存至 `results/<时间戳与配置>/checkpoints/`。每 10 epoch 保存一次，150 epoch 后每 5 epoch 保存一次。恢复训练时同时指定权重和已完成的 epoch：
+Checkpoints are stored in `results/<timestamp_and_configuration>/checkpoints/`. They are saved every 10 epochs, and every 5 epochs after epoch 150. To resume training, specify both the checkpoint and the number of completed epochs:
 
 ```bash
 CUDA_VISIBLE_DEVICES=0 python main.py \
@@ -121,9 +132,9 @@ CUDA_VISIBLE_DEVICES=0 python main.py \
   --config.training.resume_epoch=70
 ```
 
-## 采样与评估
+## Reconstruction and Evaluation
 
-使用自己的已训练 checkpoint：
+Evaluate a trained checkpoint:
 
 ```bash
 CUDA_VISIBLE_DEVICES=0 python main.py \
@@ -134,14 +145,31 @@ CUDA_VISIBLE_DEVICES=0 python main.py \
   --config.sampling.folder=fastMRI
 ```
 
-也可以通过 `MRI_CHECKPOINT` 环境变量指定权重。默认使用 raw 权重、batch size 1、关闭鲁棒性扰动及特征复用。需要 EMA 时设置 `--config.sampling.weight_source=ema`。
+The checkpoint path can alternatively be supplied through the `MRI_CHECKPOINT` environment variable. Defaults use raw model weights, batch size 1, no robustness perturbation, and no feature reuse. Select EMA weights with `--config.sampling.weight_source=ema`.
 
-默认保留历史评估方式 `metric_protocol=legacy`；需要标准评估方式时设置 `--config.sampling.metric_protocol=standard`。比较不同实验前应统一权重来源、评估方式、掩码和数据划分，具体实现见 `utils/calc.py`。
+The default evaluation protocol is `metric_protocol=legacy`. Select the standard protocol with `--config.sampling.metric_protocol=standard`. Use the same weight source, metric protocol, masks, and data split when comparing experiments. Metric definitions are implemented in `utils/calc.py`.
 
-每张切片输出 PSNR、SSIM、NMSE、HFEN、推理时间、GPU 峰值显存及模型参数量；结束后汇总质量指标均值与标准差。日志位于 `data_analy/robust/fastMRI/`，运行结果目录位于 `results/fastMRI/`。默认关闭 MAT 输出，可用 `--config.sampling.save_mat_outputs=True` 开启。
+Per-slice output includes PSNR, SSIM, NMSE, HFEN, reconstruction time, peak GPU memory, and model parameter count. Evaluation also reports quality-metric means and standard deviations across the processed slices. Logs are written under `data_analy/robust/fastMRI/`, with run directories under `results/fastMRI/`. MAT output is disabled by default; enable it with `--config.sampling.save_mat_outputs=True`.
 
-采样采用自适应步长，实际迭代数因输入与模型而异；当前循环上限为 200，`model.num_scales=1000` 不代表固定执行 1000 次采样。GPU 峰值显存来自 PyTorch allocated memory。FLOPs 来自 profiler 支持的算子，单切片值包含基于网络调用次数的估计，不能视为包含所有 FFT 等操作的精确端到端 FLOPs。
+### Feature Reuse
 
-## 来源说明
+The core sampler exposes `config.model.reuse_N`:
 
-源码保留了上游文件中的版权和许可声明。相关实现包括 [Score SDE PyTorch](https://github.com/yang-song/score_sde_pytorch)、[DDPM](https://github.com/hojonathanho/diffusion) 及 [pytorch_ema](https://github.com/fadel/pytorch_ema)；复用相应文件时请遵循文件及上游项目的许可。
+- `reuse_N=0`: full computation at every sampling iteration.
+- `reuse_N=k > 0`: one full-computation iteration followed by `k` cache-reuse iterations.
+
+For example, append `--config.model.reuse_N=1` to the reconstruction command to alternate full and reuse iterations. In the 320 x 320 configuration, the core model caches a 160 x 160 decoder feature after the 80 x 80 to 160 x 160 upsampling operation. Reuse iterations recompute the shallow encoder and decoder while bypassing the deeper encoder, bottleneck, and decoder.
+
+The sampler uses adaptive step sizes; the actual number of iterations depends on the input and model. The current iteration cap is 200. Setting `model.num_scales=1000` does not force 1000 sampling iterations.
+
+Peak GPU memory is measured using PyTorch allocated memory. FLOPs cover profiler-supported operations; full-slice estimates use model-call counts and should not be interpreted as exact end-to-end counts including all FFT operations.
+
+## Code and Data Availability
+
+The core model, training, and sampling code accompanying the paper is publicly available at [https://github.com/Jam7qgg/MDiff](https://github.com/Jam7qgg/MDiff).
+
+This repository distributes source code. MRI datasets, sensitivity maps, sampling masks, pretrained checkpoints, and experiment outputs are not included. Prepare these resources separately in accordance with their original access conditions. Ablation runners and experiment-specific batch scripts are outside the scope of this core release.
+
+## Acknowledgments
+
+The source retains the copyright and license notices of the upstream files. Related implementations include [Score SDE PyTorch](https://github.com/yang-song/score_sde_pytorch), [DDPM](https://github.com/hojonathanho/diffusion), and [pytorch_ema](https://github.com/fadel/pytorch_ema). Follow the license terms in the respective files and upstream projects when reusing their code.

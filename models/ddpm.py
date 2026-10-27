@@ -9,7 +9,7 @@ import functools
 from torch.nn.functional import scaled_dot_product_attention
 
 from . import model_utils, layers, normalization
-from .layers import CBAMBlock  # 导入新注意力模块
+from .layers import CBAMBlock  # Import the CBAM attention module.
 RefineBlock = layers.RefineBlock
 ResidualBlock = layers.ResidualBlock
 ResnetBlockDDPM = layers.ResnetBlockDDPM
@@ -21,10 +21,10 @@ get_normalization = normalization.get_normalization
 default_initializer = layers.default_init
 dws_conv3x3=layers.ddpm_dws_conv3x3
 CbamBlock=layers.CBAMBlock
-CBAMAttn = functools.partial(CBAMBlock, reduction=16)  # 使用新的注意力机制
+CBAMAttn = functools.partial(CBAMBlock, reduction=16)  # CBAM attention factory
 
 
-# 封装 DDPM Bottleneck 模块
+# DDPM bottleneck block
 class DDPMBottleneck(nn.Module):
     def __init__(self, in_ch, temb_dim=None, dropout=0.1, act=None):
         super(DDPMBottleneck, self).__init__()
@@ -49,7 +49,7 @@ class DDPMBottleneck(nn.Module):
         x = self.resblock2(x, temb)
         return x
 
-# 通用卷积模块 (用于 CSP 结构)
+# Convolution block used by the CSP structure
 class Conv(nn.Module):
     def __init__(self, c1, c2, k=1, s=1, p=None):
         super(Conv, self).__init__()
@@ -63,21 +63,21 @@ class Conv(nn.Module):
     def forward(self, x):
         return self.act(self.norm(self.conv(x)))
 
-# CSP 瓶颈层 - 集成 DDPMBottleneck
+# CSP bottleneck containing DDPM bottleneck blocks
 class C3DDPMBottleneck(nn.Module):
     def __init__(self, c1, c2, n=1, e=0.5, temb_dim=None, dropout=0.1, act=None):
         super(C3DDPMBottleneck, self).__init__()
         if act is None:
             act = nn.SiLU()
 
-        c_ = int(c2 * e)  # 隐藏通道数
+        c_ = int(c2 * e)  # Hidden channel count
 
-        # CSP 分支
+        # CSP branches
         self.cv1 = Conv(c1, c_, 1, 1)
         self.cv2 = Conv(c1, c_, 1, 1)
         self.cv3 = Conv(2 * c_, c2, 1)
 
-        # 主路径堆叠 Bottleneck
+        # Stack bottleneck blocks in the main branch.
         self.bottlenecks = nn.ModuleList()
         for _ in range(n):
             self.bottlenecks.append(
@@ -90,15 +90,15 @@ class C3DDPMBottleneck(nn.Module):
             )
 
     def forward(self, x, temb=None):
-        # 路径 1: 经过 Bottlenecks
+        # Branch 1: bottleneck transformations
         route1 = self.cv1(x)
         for m in self.bottlenecks:
             route1 = m(route1, temb)
 
-        # 路径 2: 短路连接
+        # Branch 2: short projection path
         route2 = self.cv2(x)
 
-        # 融合
+        # Fuse the two branches.
         out = self.cv3(torch.cat([route1, route2], dim=1))
         return out
 
@@ -123,9 +123,9 @@ class DDPM(nn.Module):
 
         # --- Caching attributes for accelerated sampling 1---
         self.caching_enabled = False
-        self.cached_160x160_h = None  # 缓存160x160特征图（80x80->160x160上采样后的特征图）
-        self.reuse_N = 0 # 缓存复用间隔
-        self.reuse_counter = 0 # 当前缓存复用步数计数器
+        self.cached_160x160_h = None  # Cache the feature map after upsampling from 80x80 to 160x160.
+        self.reuse_N = 0 # Cache reuse interval
+        self.reuse_counter = 0 # Cache reuse step counter
         # ----------------------------------------------------
 
         AttnBlock = functools.partial(layers.AttnBlock)
@@ -169,7 +169,7 @@ class DDPM(nn.Module):
                     modules.append(CBAMAttn(channels=in_ch))
                 hs_c.append(in_ch)
             if i_level != num_resolutions - 1:
-                # 下采样 (部分层级使用深度可分离卷积)
+                # Downsampling with depthwise separable convolution at selected levels
                 if i_level > 0 and i_level < num_resolutions - 2:
                     modules.append(Downsample(channels=in_ch, with_conv=resamp_with_conv, custom_conv=dws_conv3x3))
                 else:
@@ -177,7 +177,7 @@ class DDPM(nn.Module):
                 hs_c.append(in_ch)
 
         in_ch = hs_c[-1]
-        # CSP 结构的瓶颈层
+        # CSP bottleneck
         modules.append(C3DDPMBottleneck(
             c1=in_ch,
             c2=in_ch,
@@ -203,7 +203,7 @@ class DDPM(nn.Module):
             if all_resolutions[i_level] in attn_resolutions:
                 modules.append(CBAMAttn(channels=in_ch))
             if i_level != 0:
-                # 上采样 (部分层级使用深度可分离卷积)
+                # Upsampling with depthwise separable convolution at selected levels
                 if i_level > 1 and i_level < num_resolutions:
                     custom_up = functools.partial(Upsample, with_conv=resamp_with_conv)
                     modules.append(custom_up(channels=in_ch, custom_conv=dws_conv3x3))
@@ -212,7 +212,7 @@ class DDPM(nn.Module):
 
         assert not hs_c
         modules.append(nn.GroupNorm(num_channels=in_ch, num_groups=32, eps=1e-6))
-        modules.append(conv3x3(in_ch, channels, init_scale=0.0))  # 上采样最后一层也使用 conv 3x3
+        modules.append(conv3x3(in_ch, channels, init_scale=0.0))  # Use a 3x3 convolution for the output projection.
         self.all_modules = nn.ModuleList(modules)
 
         self.scale_by_sigma = config.model.scale_by_sigma
@@ -229,14 +229,14 @@ class DDPM(nn.Module):
         self.cached_160x160_h = None
         self.caching_enabled = False
         self.reuse_counter = 0
-        print("INFO: DDPM Cache cleared (80x80->160x160特征图).")
+        print("INFO: DDPM Cache cleared (80x80->160x160 feature map).")
 
     def forward(self, x, labels, use_cache_this_step=False):
         modules = self.all_modules
         m_idx = 0
         hs = []
         
-        # 1. 时间步/条件嵌入 (Timestep/Conditional Embedding)
+        # 1. Timestep / conditional embedding
         if self.conditional:
             timesteps = labels
             temb = layers.get_timestep_embedding(timesteps, self.nf)
@@ -247,26 +247,26 @@ class DDPM(nn.Module):
         else:
             temb = None
 
-        # 2. 数据预处理
+        # 2. Input preprocessing
         if self.centered:
             h = x
         else:
             h = 2 * x - 1.0
 
-        # 3. 推理逻辑：完整路径 vs 缓存复用路径
+        # 3. Select the full pass or cache reuse pass.
         if (not self.caching_enabled) or (not use_cache_this_step):
-            # === 完整推理路径 (Full Pass) ===
-            # 计算所有层级，并在适当时机更新缓存
+            # === Full pass ===
+            # Compute every level and update the cached decoder feature.
             
             # (0) Early Fusion
             h = modules[m_idx](h)
             m_idx += 1
 
-            # (1) Encoder: 初始卷积
+            # (1) Encoder: input convolution
             hs = [modules[m_idx](h)]
             m_idx += 1
             
-            # (2) Encoder: 逐层特征提取
+            # (2) Encoder: hierarchical feature extraction
             # Level 0 (320x320)
             for i_block in range(self.num_res_blocks):
                 h = modules[m_idx](hs[-1], temb)
@@ -293,15 +293,15 @@ class DDPM(nn.Module):
                     hs.append(modules[m_idx](hs[-1]))
                     m_idx += 1
             
-            # (3) Bottleneck: 中间层
+            # (3) Bottleneck
             h = hs[-1]
             h = modules[m_idx](h, temb)
             m_idx += 1
 
-            # (4) Decoder: 上采样与特征融合
+            # (4) Decoder: upsampling and feature fusion
             for i_level in reversed(range(self.num_resolutions)):
                 for i_block in range(self.num_res_blocks + 1):
-                    # 跳跃连接系数调整
+                    # Scale the skip connection.
                     if i_block == 0: k = 0.72
                     elif i_block == 1: k = 0.82
                     else: k = 0.90
@@ -318,7 +318,7 @@ class DDPM(nn.Module):
                     h = modules[m_idx](h)
                     m_idx += 1
                     
-                    # [Cache Update] 在 Level 2 结束 (即将进入 Level 1, 160x160) 时缓存特征图
+                    # [Cache Update] Cache features after level 2 upsampling, before level 1 at 160x160.
                     if i_level == 2 and self.caching_enabled:
                         self.cached_160x160_h = h.clone()
 
@@ -326,11 +326,11 @@ class DDPM(nn.Module):
                 self.reuse_counter = 1
                 
         else:
-            # === 特征图复用路径 (Cache Reuse Pass) ===
-            # 核心策略：
-            # 1. 仅运行浅层 Encoder (Level 0, 1) 以生成浅层 Decoder 所需的 Skip Connections。
-            # 2. 跳过深层 Encoder、Bottleneck 和深层 Decoder。
-            # 3. 直接注入缓存的深层特征图，仅运行浅层 Decoder (Level 1, 0)。
+            # === Cache reuse pass ===
+            # Reuse strategy:
+            # 1. Run encoder levels 0 and 1 to produce shallow skip features.
+            # 2. Skip the deep encoder, bottleneck, and deep decoder.
+            # 3. Inject cached deep features and run decoder levels 1 and 0.
             
             if self.cached_160x160_h is None:
                 print("WARNING: Cache is None, falling back to full computation")
@@ -340,12 +340,12 @@ class DDPM(nn.Module):
             h = modules[m_idx](h)
             m_idx += 1
 
-            # (1) 浅层 Encoder (Partial Encoder)
-            # 初始卷积
+            # (1) Shallow encoder
+            # Input convolution
             hs = [modules[m_idx](h)]
             m_idx += 1
 
-            # 运行 Level 0 和 Level 1
+            # Run levels 0 and 1.
             for i_level in range(self.num_resolutions):
                 if i_level < 2:
                     for i_block in range(self.num_res_blocks):
@@ -357,17 +357,17 @@ class DDPM(nn.Module):
                         hs.append(h)
                     
                     if i_level != self.num_resolutions - 1:
-                        # Downsample 处理
+                        # Handle downsampling.
                         if i_level == 1:
-                            # [关键逻辑] Level 1 结束时不执行下采样
-                            # 因为我们跳过了深层网络，不需要生成 80x80 的特征图放入 hs 栈中
-                            # 否则会导致 Decoder Level 1 取出错误的 Skip Connection
+                            # Do not downsample at the end of level 1.
+                            # The skipped deep path does not need an 80x80 skip feature.
+                            # Pushing it would misalign the skip features for decoder level 1.
                             m_idx += 1
                         else:
                             hs.append(modules[m_idx](hs[-1]))
                             m_idx += 1
                 else:
-                    # (2) 跳过深层 Encoder (Level >= 2)
+                    # (2) Skip encoder levels >= 2.
                     for i_block in range(self.num_res_blocks):
                         m_idx += 1 # ResBlock
                         if self.all_resolutions[i_level] in self.attn_resolutions:
@@ -376,13 +376,13 @@ class DDPM(nn.Module):
                     if i_level != self.num_resolutions - 1:
                         m_idx += 1
 
-            # (3) 跳过 Bottleneck
+            # (3) Skip the bottleneck.
             m_idx += 1 
             
-            # (4) 浅层 Decoder (Partial Decoder)
+            # (4) Shallow decoder
             for i_level in reversed(range(self.num_resolutions)):
                 if i_level >= 2:
-                    # 跳过深层 Decoder (Level 3, 2)
+                    # Skip decoder levels 3 and 2.
                     for i_block in range(self.num_res_blocks + 1):
                         m_idx += 1 # ResBlock
                     
@@ -392,18 +392,18 @@ class DDPM(nn.Module):
                     if i_level != 0:
                         m_idx += 1 # Upsample
                     
-                    # [Cache Injection] 注入缓存
+                    # [Cache Injection] Inject the cached feature.
                     if i_level == 2:
                         h = self.cached_160x160_h
                 else:
-                    # 运行浅层 Decoder (Level 1, 0)
+                    # Run decoder levels 1 and 0.
                     for i_block in range(self.num_res_blocks + 1):
-                        # 系数调整
+                        # Scale the skip feature.
                         if i_block == 0: k = 0.72
                         elif i_block == 1: k = 0.82
                         else: k = 0.90
                         
-                        # 使用计算好的浅层 hs 和注入的特征图进行融合
+                        # Fuse the shallow skip feature with the injected decoder feature.
                         h = modules[m_idx](torch.cat([h, k * hs.pop()], dim=1), temb)
                         m_idx += 1
                     
@@ -417,7 +417,7 @@ class DDPM(nn.Module):
 
             self.reuse_counter += 1
 
-        # 4. 输出层 (Output Projection)
+        # 4. Output projection
         assert not hs
         h = self.act(modules[m_idx](h))
         m_idx += 1

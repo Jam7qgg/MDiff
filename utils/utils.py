@@ -11,26 +11,26 @@ import random
 
 
 def setup_seed(seed):
-    #  下面两个常规设置了，用来np和random的话要设置
+    #  Seed NumPy and Python random number generators.
     np.random.seed(seed)
     random.seed(seed)
 
-    os.environ["PYTHONHASHSEED"] = str(seed)  # 禁止hash随机化
+    os.environ["PYTHONHASHSEED"] = str(seed)  # Set the hash seed for child processes.
     os.environ[
         "CUBLAS_WORKSPACE_CONFIG"
-    ] = ":4096:8"  # 在cuda 10.2及以上的版本中，需要设置以下环境变量来保证cuda的结果可复现
+    ] = ":4096:8"  # Configure deterministic cuBLAS behavior on CUDA 10.2 and later.
 
     torch.cuda.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)  # 多GPU训练需要设置这个
+    torch.cuda.manual_seed_all(seed)  # Seed all GPUs.
     torch.manual_seed(seed)
 
     torch.use_deterministic_algorithms(
         True
-    )  # 一些操作使用了原子操作，不是确定性算法，不能保证可复现，设置这个禁用原子操作，保证使用确定性算法
-    torch.backends.cudnn.deterministic = False # 确保每次返回的卷积算法是确定的
-    torch.backends.cudnn.enabled = True  # 禁用cudnn使用非确定性算法
+    )  # Require deterministic algorithms where PyTorch provides them.
+    torch.backends.cudnn.deterministic = False # Preserve the existing cuDNN deterministic flag.
+    torch.backends.cudnn.enabled = True  # Enable cuDNN.
     torch.backends.cudnn.benchmark = (
-        True  # 与上面一条代码配套使用，True的话会自动寻找最适合当前配置的高效算法，来达到优化运行效率的问题。False保证实验结果可复现。
+        True  # Enable cuDNN algorithm benchmarking.
     )
 
 
@@ -43,13 +43,13 @@ def worker_init_fn(worked_id):
 def init_seeds(seed=0):
     np.random.seed(seed)
     torch.manual_seed(seed)  # sets the seed for generating random numbers.
-    # Sets the seed for generating random numbers for the current GPU. It’s safe to call this function if CUDA is not available; in that case, it is silently ignored.
+    # Sets the seed for generating random numbers for the current GPU. It is safe to call this function if CUDA is not available; in that case, it is silently ignored.
     torch.cuda.manual_seed(seed)
-    # Sets the seed for generating random numbers on all GPUs. It’s safe to call this function if CUDA is not available; in that case, it is silently ignored.
+    # Sets the seed for generating random numbers on all GPUs. It is safe to call this function if CUDA is not available; in that case, it is silently ignored.
     torch.cuda.manual_seed_all(seed)
 
     if seed == 0:
-        torch.backends.cudnn.deterministic = True  # 固定卷积算法, 设为True会导致卷积变慢
+        torch.backends.cudnn.deterministic = True  # Request deterministic cuDNN convolution algorithms.
         torch.backends.cudnn.benchmark = False
 
 

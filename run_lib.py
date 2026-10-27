@@ -432,7 +432,7 @@ def train(config, workdir):
                     param_num,
                 )
 
-        # 每10 epoch
+        # Save checkpoints at the configured epoch intervals.
         if (epoch + 1) % 10 ==0 or (epoch+1>150 and (epoch+1)%5== 0):
             if not is_distributed or local_rank == 0:
                 save_checkpoint(
@@ -446,10 +446,10 @@ def sample(config, workdir):
       config: Configuration to use.
       workdir: Working directory.
     """
-    # 创建日志文件路径
+    # Create the log file path.
     save_dir = f"./data_analy/robust"
     save_dir=os.path.join(save_dir,config.sampling.folder)
-    os.makedirs(save_dir, exist_ok=True)  # 自动创建目录
+    os.makedirs(save_dir, exist_ok=True)  # Create the output directory if needed.
     robustness_tag = _robustness_tag(config)
     folder_label = os.path.basename(os.path.normpath(str(config.sampling.folder)))
     file_name = (
@@ -541,7 +541,7 @@ def sample(config, workdir):
         )
         test_dl = datasets.get_dataset(
             config, "datashift"
-        )  # mode=test:90多张图，modex=sample:一张图，第十张
+        )  # Load the requested evaluation split.
     elif FLAGS.config.sampling.datashift == "photom":
         SAMPLING_FOLDER_ID = "_".join(
             [
@@ -572,7 +572,7 @@ def sample(config, workdir):
         )
         test_dl = datasets.get_dataset(
             config, "photom"
-        )  # mode=test:90多张图，modex=sample:一张图，第十张
+        )  # Load the requested evaluation split.
     else:
         if FLAGS.config.data.dataset_name == "IXI":
             mask_name = str(FLAGS.config.sampling.mask_type)
@@ -608,7 +608,7 @@ def sample(config, workdir):
             )
         test_dl = datasets.get_dataset(
             config, "test"
-        )  # mode=test:90多张图，modex=sample:一张图，第十张
+        )  # Load the requested evaluation split.
 
     if robustness_tag != "none":
         SAMPLING_FOLDER_ID = f"{SAMPLING_FOLDER_ID}_{robustness_tag}"
@@ -807,7 +807,7 @@ def sample(config, workdir):
         # We wrap them in a tuple/list to be handled by sde_lib.py
         atb_combined = (atb, img_pd_2ch)
 
-        recon, n, infer_stats = sampling_fn(score_model, atb_combined, atb_to_image, csm) #添加了train_mask 参数
+        recon, n, infer_stats = sampling_fn(score_model, atb_combined, atb_to_image, csm) #Run the configured reconstruction sampler.
 
 
         # Extract PDFS part for evaluation (channels 0,1)
@@ -871,7 +871,7 @@ def sample(config, workdir):
         # print("---------------------------------------------")
         # print("---------------- point:", index, "------------------")
         # print("---------------------------------------------")
-        # print(f"采样步数为：{n}")
+        # print(f"Sampling steps: {n}")
 
         print(
             f"mse_{config.sampling.mse}_snr_{config.sampling.snr}_cmse_{config.sampling.corrector_mse}:"
@@ -938,28 +938,28 @@ def sample(config, workdir):
             else f"{theoretical_flops_speedup:.4f}x"
         )
         profile_msg = (
-            f"权重来源: {weight_source}\n"
-            f"指标口径: {metric_protocol}\n"
-            f"参数量: {param_num} ({_format_large_number(param_num)})\n"
-            f"单次完整U-Net forward FLOPs: {_format_large_number(forward_flops)}FLOPs\n"
-            f"单次部分U-Net forward FLOPs: {_format_large_number(slice_partial_flops)}FLOPs\n"
-            f"单次数据一致性FLOPs: {_format_large_number(slice_dc_flops)}FLOPs\n"
-            f"门控FLOPs(已包含在forward中): {_format_large_number(slice_gate_flops)}FLOPs\n"
-            f"完整单张切片重建FLOPs: {_format_large_number(estimated_slice_flops)}FLOPs\n"
-            f"N=1完整基线FLOPs: {_format_large_number(baseline_slice_flops)}FLOPs\n"
-            f"相对N=1 FLOPs降低: {reduction_text}\n"
-            f"理论FLOPs加速比: {speedup_text}\n"
-            f"完整U-Net迭代数: {infer_stats.get('full_unet_steps', 'N/A')}\n"
-            f"缓存复用迭代数: {infer_stats.get('cache_reuse_steps', 'N/A')}\n"
-            f"完整U-Net forward次数: {infer_stats.get('full_unet_forward_calls', 'N/A')}\n"
-            f"部分U-Net forward次数: {infer_stats.get('cache_reuse_forward_calls', 'N/A')}\n"
-            f"单张切片推理时间: {infer_stats['time_per_slice_sec']:.4f} s\n"
-            f"Batch总推理时间: {infer_stats['total_time_sec']:.4f} s\n"
-            f"GPU峰值显存: {infer_stats['peak_gpu_memory_mb']:.2f} MB"
+            f"Weight source: {weight_source}\n"
+            f"Metric protocol: {metric_protocol}\n"
+            f"Parameters: {param_num} ({_format_large_number(param_num)})\n"
+            f"Single full U-Net forward FLOPs: {_format_large_number(forward_flops)}FLOPs\n"
+            f"Single partial U-Net forward FLOPs: {_format_large_number(slice_partial_flops)}FLOPs\n"
+            f"FLOPs per data consistency call: {_format_large_number(slice_dc_flops)}FLOPs\n"
+            f"Gate FLOPs (included in forward FLOPs): {_format_large_number(slice_gate_flops)}FLOPs\n"
+            f"Full-slice reconstruction FLOPs: {_format_large_number(estimated_slice_flops)}FLOPs\n"
+            f"Full-computation baseline FLOPs (N=1): {_format_large_number(baseline_slice_flops)}FLOPs\n"
+            f"FLOPs reduction relative to N=1: {reduction_text}\n"
+            f"Theoretical FLOPs speedup: {speedup_text}\n"
+            f"Full U-Net iterations: {infer_stats.get('full_unet_steps', 'N/A')}\n"
+            f"Cache reuse iterations: {infer_stats.get('cache_reuse_steps', 'N/A')}\n"
+            f"Full U-Net forward calls: {infer_stats.get('full_unet_forward_calls', 'N/A')}\n"
+            f"Partial U-Net forward calls: {infer_stats.get('cache_reuse_forward_calls', 'N/A')}\n"
+            f"Inference time per slice: {infer_stats['time_per_slice_sec']:.4f} s\n"
+            f"Inference time per batch: {infer_stats['total_time_sec']:.4f} s\n"
+            f"Peak GPU memory: {infer_stats['peak_gpu_memory_mb']:.2f} MB"
         )
         print(profile_msg)
 
-        log_msg = f"---------------------------------------------\n ----------------point: {index}----------------\n  ---------------------------------------------\n 采样步数: {n}\n {profile_msg}\n NMSE: ({nmse_value:.4f})\n SSIM: ({ssim_value:.4f})\n PSNR: ({psnr_value:.4f})\n HFEN: ({hfen_value:.4f})"
+        log_msg = f"---------------------------------------------\n ----------------point: {index}----------------\n  ---------------------------------------------\n Sampling steps: {n}\n {profile_msg}\n NMSE: ({nmse_value:.4f})\n SSIM: ({ssim_value:.4f})\n PSNR: ({psnr_value:.4f})\n HFEN: ({hfen_value:.4f})"
         print(log_msg)
         with open(file_path, 'a') as f:
             f.write(log_msg + "\n")
@@ -1012,36 +1012,36 @@ def sample(config, workdir):
         total_slices = sum(item["num_slices"] for item in slice_stats)
         summary_msg = (
             "=============================================\n"
-            "所有切片平均结果\n"
+            "Aggregate results across all slices\n"
             "=============================================\n"
-            f"切片数量: {total_slices}\n"
-            f"权重来源: {weight_source}\n"
-            f"指标口径: {metric_protocol}\n"
-            f"参数量: {param_num} ({_format_large_number(param_num)})\n"
-            f"单次完整U-Net forward FLOPs: {_format_large_number(forward_flops)}FLOPs\n"
-            f"单次部分U-Net forward FLOPs: {_format_large_number(mean_stat('partial_forward_flops'))}FLOPs\n"
-            f"单次数据一致性FLOPs: {_format_large_number(mean_stat('data_consistency_flops'))}FLOPs\n"
-            f"门控FLOPs(已包含在forward中): {_format_large_number(mean_stat('gate_flops'))}FLOPs\n"
-            f"平均完整单张切片重建FLOPs: {_format_large_number(mean_stat('estimated_slice_flops'))}FLOPs\n"
-            f"N=1完整基线FLOPs: {_format_large_number(mean_stat('baseline_slice_flops'))}FLOPs\n"
-            f"平均相对N=1 FLOPs降低: {percent_stat(mean_stat('flops_reduction_vs_n1'))}\n"
-            f"平均理论FLOPs加速比: {speedup_stat(mean_stat('theoretical_flops_speedup'))}\n"
-            f"平均单张切片推理时间: {mean_stat('time_per_slice_sec'):.4f} s\n"
-            f"平均Batch总推理时间: {mean_stat('total_time_sec'):.4f} s\n"
-            f"平均GPU峰值显存: {mean_stat('peak_gpu_memory_mb'):.2f} MB\n"
-            f"平均采样步数: {mean_stat('sampling_steps'):.2f}\n"
-            f"平均完整U-Net迭代数: {fixed_stat(mean_stat('full_unet_steps'))}\n"
-            f"平均缓存复用迭代数: {fixed_stat(mean_stat('cache_reuse_steps'))}\n"
-            f"平均完整U-Net forward次数: {fixed_stat(mean_stat('full_unet_forward_calls'))}\n"
-            f"平均部分U-Net forward次数: {fixed_stat(mean_stat('cache_reuse_forward_calls'))}\n"
-            f"NMSE均值: {mean_stat('nmse'):.6f}\n"
-            f"NMSE标准差: {std_stat('nmse'):.6f}\n"
-            f"SSIM均值: {mean_stat('ssim'):.6f}\n"
-            f"SSIM标准差: {std_stat('ssim'):.6f}\n"
-            f"PSNR均值: {mean_stat('psnr'):.6f}\n"
-            f"PSNR标准差: {std_stat('psnr'):.6f}\n"
-            f"HFEN均值: {mean_stat('hfen'):.6f}\n"
-            f"HFEN标准差: {std_stat('hfen'):.6f}"
+            f"Number of slices: {total_slices}\n"
+            f"Weight source: {weight_source}\n"
+            f"Metric protocol: {metric_protocol}\n"
+            f"Parameters: {param_num} ({_format_large_number(param_num)})\n"
+            f"Single full U-Net forward FLOPs: {_format_large_number(forward_flops)}FLOPs\n"
+            f"Single partial U-Net forward FLOPs: {_format_large_number(mean_stat('partial_forward_flops'))}FLOPs\n"
+            f"FLOPs per data consistency call: {_format_large_number(mean_stat('data_consistency_flops'))}FLOPs\n"
+            f"Gate FLOPs (included in forward FLOPs): {_format_large_number(mean_stat('gate_flops'))}FLOPs\n"
+            f"Mean full-slice reconstruction FLOPs: {_format_large_number(mean_stat('estimated_slice_flops'))}FLOPs\n"
+            f"Full-computation baseline FLOPs (N=1): {_format_large_number(mean_stat('baseline_slice_flops'))}FLOPs\n"
+            f"Mean FLOPs reduction relative to N=1: {percent_stat(mean_stat('flops_reduction_vs_n1'))}\n"
+            f"Mean theoretical FLOPs speedup: {speedup_stat(mean_stat('theoretical_flops_speedup'))}\n"
+            f"Mean inference time per slice: {mean_stat('time_per_slice_sec'):.4f} s\n"
+            f"Mean inference time per batch: {mean_stat('total_time_sec'):.4f} s\n"
+            f"Mean peak GPU memory: {mean_stat('peak_gpu_memory_mb'):.2f} MB\n"
+            f"Mean sampling steps: {mean_stat('sampling_steps'):.2f}\n"
+            f"Mean full U-Net iterations: {fixed_stat(mean_stat('full_unet_steps'))}\n"
+            f"Mean cache reuse iterations: {fixed_stat(mean_stat('cache_reuse_steps'))}\n"
+            f"Mean full U-Net forward calls: {fixed_stat(mean_stat('full_unet_forward_calls'))}\n"
+            f"Mean partial U-Net forward calls: {fixed_stat(mean_stat('cache_reuse_forward_calls'))}\n"
+            f"NMSE mean: {mean_stat('nmse'):.6f}\n"
+            f"NMSE standard deviation: {std_stat('nmse'):.6f}\n"
+            f"SSIM mean: {mean_stat('ssim'):.6f}\n"
+            f"SSIM standard deviation: {std_stat('ssim'):.6f}\n"
+            f"PSNR mean: {mean_stat('psnr'):.6f}\n"
+            f"PSNR standard deviation: {std_stat('psnr'):.6f}\n"
+            f"HFEN mean: {mean_stat('hfen'):.6f}\n"
+            f"HFEN standard deviation: {std_stat('hfen'):.6f}"
         )
         print(summary_msg)
         with open(file_path, 'a') as f:

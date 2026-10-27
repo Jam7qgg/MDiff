@@ -130,7 +130,7 @@ class AdaptivePredictor(Predictor):
 
         h_ = h[:, None, None, None].to(device).float()  # expand for multiplications
         t_ = t[:, None, None, None].to(device).float()  # expand for multiplications
-        with torch.amp.autocast(device_type='cuda',dtype=torch.float16):  # 使用混合精度推理，结果没区别，计算速度快1/3左右
+        with torch.amp.autocast(device_type='cuda',dtype=torch.float16):  # Use mixed precision for inference.
 
             z = torch.randn_like(x).to(device)
             if x.shape[1] == 4:
@@ -213,14 +213,14 @@ class AdaptivePredictor(Predictor):
                     x = torch.cat([x[:, :2, :, :], x_pd_enforced], dim=1)
 
             # Change the step-size
-            h_max = torch.clamp(t_ - 1e-3,min=0)  # max step-size must be the distance to the end (we use maximum between that and zero in case of a tiny but negative value: -1e-10)  #self.eps修改为1e-3
+            h_max = torch.clamp(t_ - 1e-3,min=0)  # max step-size must be the distance to the end (we use maximum between that and zero in case of a tiny but negative value: -1e-10)  #Use the sampling endpoint 1e-3.
 
 
             E_scaled_norm = torch.clamp(E_scaled_norm, min=1e-8)
             E_pow = torch.where(h_ == 0, h_, torch.pow(E_scaled_norm,
                                                        -self.exp))  # Only applies power when not zero, otherwise, we get nans
             h_new = torch.minimum(h_max, self.safety * h_ * E_pow)
-            h_new = torch.maximum(h_new, self.h_min*torch.ones_like(h_new))  #新加入使用 h_min
+            h_new = torch.maximum(h_new, self.h_min*torch.ones_like(h_new))  #Enforce the minimum step size.
 
             return x, x_prev, t_.reshape((-1)), h_new.reshape((-1)),accept
 
@@ -357,7 +357,7 @@ def get_pc_sampler(config, sde, shape, predictor, train_mask, atb_mask,
             while ((t > 1e-3) & (torch.abs(t - 1e-3) > 0.01)).any() and total_iterations < max_N:
                 # Check if caching should be enabled based on config (reuse_N > 0)
                 if not caching_activated and reuse_N > 0:
-                    # 兼容DataParallel封装
+                    # Support DataParallel-wrapped models.
                     if hasattr(model, 'module') and hasattr(model.module, 'enable_caching'):
                         model.module.enable_caching(reuse_N=reuse_N)
                     elif hasattr(model, 'enable_caching'):
@@ -365,19 +365,19 @@ def get_pc_sampler(config, sde, shape, predictor, train_mask, atb_mask,
                     caching_activated = True
                     print(f"[CACHE] Enabled N-interval caching with reuse_N={reuse_N}")
 
-                # 计算当前步是否复用缓存
+                # Select whether to reuse cached features for this iteration.
                 use_cache_this_step = False
                 cycle_idx = 0
                 if caching_activated:
                     cycle_len = reuse_N + 1
                     cycle_idx = reuse_counter % cycle_len
-                    use_cache_this_step = (cycle_idx != 0)  # 0表示完整推理，其他为复用
+                    use_cache_this_step = (cycle_idx != 0)  # Cycle index 0 uses a full pass; other indices reuse the cache.
                 mode_str = "CACHE" if use_cache_this_step else "FULL"
 
                 x, x_prev, t, h, accept = predictor_update_fn(
                     x, t, h, atb, csm, x_prev=x_prev, model=model, use_cache_this_step=use_cache_this_step)
 
-                # 统计本步accepted数目（batch内样本数）
+                # Count accepted samples in the batch for this iteration.
                 try:
                     accept_count = int(accept.sum().item())
                 except Exception:
